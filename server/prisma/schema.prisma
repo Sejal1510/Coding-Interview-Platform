@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  STUDENT
+  INTERVIEWER
+}
+
+enum SessionStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  hostedSessions   Session[]    @relation("Interviewer")
+  attendedSessions Session[]    @relation("Student")
+  submissions      Submission[]
+  questions        Question[]
+}
+
+model Session {
+  id          String        @id @default(uuid())
+  roomCode    String        @unique
+  status      SessionStatus @default(SCHEDULED)
+  scheduledAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  interviewerId String
+  interviewer   User   @relation("Interviewer", fields: [interviewerId], references: [id])
+  studentId     String?
+  student       User?  @relation("Student", fields: [studentId], references: [id])
+
+  sessionQuestions SessionQuestion[]
+  submissions      Submission[]
+  state            SessionState?
+}
+
+model Question {
+  id           String     @id @default(uuid())
+  title        String
+  description  String
+  difficulty   Difficulty
+  timeLimitSec Int        @default(1800)
+  createdBy    String
+  creator      User       @relation(fields: [createdBy], references: [id])
+
+  sessionQuestions SessionQuestion[]
+}
+
+model SessionQuestion {
+  id             String    @id @default(uuid())
+  sessionId      String
+  questionId     String
+  orderIndex     Int
+  timerStartedAt DateTime?
+
+  session  Session  @relation(fields: [sessionId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
+}
+
+model Submission {
+  id        String   @id @default(uuid())
+  sessionId String
+  userId    String
+  code      String
+  language  String
+  output    String?
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+model SessionState {
+  sessionId     String   @id
+  yjsSnapshot   Bytes?
+  language      String   @default("javascript")
+  lastRunOutput String?
+  updatedAt     DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id])
+}

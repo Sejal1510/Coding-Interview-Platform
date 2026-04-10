@@ -1,0 +1,228 @@
+import { useEffect, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import Editor from '@monaco-editor/react'
+import { io } from 'socket.io-client'
+import { MonacoBinding } from 'y-monaco'
+import { useAuth } from '../context/AuthContext'
+import { useCollab } from '../hooks/useCollab'
+import api from '../services/api'
+import Timer from '../components/Timer'
+
+const LANGUAGES = ['javascript', 'python', 'java', 'cpp']
+
+export default function Room() {
+  const { roomCode } = useParams()
+  const { user } = useAuth()
+  const navigate = useNavigate()
+
+  const socketRef = useRef(null)
+  const editorRef = useRef(null)
+  const bindingRef = useRef(null)
+
+  const [session, setSession] = useState(null)
+  const [language, setLanguage] = useState('javascript')
+  const [output, setOutput] = useState('')
+  const [running, setRunning] = useState(false)
+  const [connected, setConnected] = useState(false)
+  const [participants, setParticipants] = useState([])
+  const [outputStatus, setOutputStatus] = useState('idle')
+
+  // load session
+  useEffect(() => {
+    api.get(`/sessions/room/${roomCode}`)
+      .then(res => {
+        setSession(res.data.session)
+        if (res.data.session.state?.language) {
+          setLanguage(res.data.session.state.language)
+        }
+      })
+      .catch(() => navigate('/dashboard'))
+  }, [roomCode])
+
+  // init socket
+  useEffect(() => {
+    if (!user) return
+    const socket = io('http://localhost:5000')
+    socketRef.current = socket
+
+    socket.on('connect', () => {
+      setConnected(true)
+      socket.emit('join-room', { roomCode, user })
+    })
+
+    socket.on('disconnect', () => setConnected(false))
+
+    socket.on('user-joined', ({ user: u }) => {
+      setParticipants(prev => [...prev.filter(p => p.id !== u.id), u])
+    })
+
+    socket.on('user-left', ({ user: u }) => {
+      setParticipants(prev => prev.filter(p => p.id !== u?.id))
+    })
+
+    socket.on('language-update', ({ language: lang }) => setLanguage(lang))
+
+    socket.on('run-result', ({ output: result, status }) => {
+      setOutput(result)
+      setOutputStatus(status || 'idle')
+      setRunning(false)
+    })
+
+    return () => socket.disconnect()
+  }, [user, roomCode])
+
+  // Yjs collab
+  const { ydoc, ytext, awareness } = useCollab(socketRef.current, roomCode, user)
+
+  // bind Yjs to Monaco when editor mounts
+  const handleEditorMount = (editor, monaco) => {
+    editorRef.current = editor
+
+    // wait for ytext to be ready
+    const tryBind = () => {
+      if (!ytextRef.current) {
+        setTimeout(tryBind, 100)
+        return
+      }
+      if (bindingRef.current) bindingRef.current.destroy()
+      bindingRef.current = new MonacoBinding(
+        ytext.current,
+        editor.getModel(),
+        new Set([editor]),
+        null
+      )
+    }
+    tryBind()
+  }
+
+  // need a stable ref for ytext for the mount callback
+  const ytextRef = ytext
+
+  const handleLanguageChange = (e) => {
+    const lang = e.target.value
+    setLanguage(lang)
+    socketRef.current?.emit('language-change', { roomCode, language: lang })
+  }
+
+  const handleRunCode = () => {
+    setRunning(true)
+    setOutput('Running...')
+    const code = editorRef.current?.getValue() || ''
+    socketRef.current?.emit('run-code', { roomCode, code, language })
+
+    // save submission to DB
+    if (session?.id) {
+      api.post('/submissions', {
+        sessionId: session.id,
+        code,
+        language,
+        output: ''
+      }).catch(err => console.error('Failed to save submission:', err))
+    }
+  }
+
+  return (
+    <div style={styles.container}>
+      {/* Top bar */}
+      <div style={styles.topBar}>
+        <div style={styles.leftBar}>
+          <span style={styles.roomCodeLabel}>{roomCode}</span>
+          <span style={{ ...styles.dot, background: connected ? '#22c55e' : '#ef4444' }} />
+          <span style={styles.connLabel}>{connected ? 'Connected' : 'Disconnected'}</span>
+          {awareness.map((a, i) => (
+            <span key={i} style={{ ...styles.cursorBadge, background: a.user?.color }}>
+              {a.user?.name}
+            </span>
+          ))}
+
+
+          
+          <Timer
+            socket={socketRef.current}
+            roomCode={roomCode}
+            isInterviewer={user?.role === 'INTERVIEWER'}
+          />
+
+
+        </div>
+        <div style={styles.rightBar}>
+          <select style={styles.select} value={language} onChange={handleLanguageChange}>
+            {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <button style={styles.runBtn} onClick={handleRunCode} disabled={running}>
+            {running ? 'Running...' : 'Run Code'}
+          </button>
+          <button style={styles.backBtn} onClick={() => navigate('/dashboard')}>
+            Leave
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.main}>
+        {/* Question panel */}
+        <div style={styles.questionPanel}>
+          <span style={styles.diffBadge}>
+            {session?.sessionQuestions?.[0]?.question?.difficulty || '...'}
+          </span>
+          <h3 style={styles.questionTitle}>
+            {session?.sessionQuestions?.[0]?.question?.title || 'Loading...'}
+          </h3>
+          <p style={styles.questionDesc}>
+            {session?.sessionQuestions?.[0]?.question?.description || ''}
+          </p>
+        </div>
+
+        {/* Editor */}
+        <div style={styles.editorPanel}>
+          <Editor
+            height="100%"
+            language={language}
+            defaultValue="// Start coding here"
+            onMount={handleEditorMount}
+            theme="vs-dark"
+            options={{
+              fontSize: 14,
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              automaticLayout: true
+            }}
+          />
+        </div>
+
+        {/* Output panel */}
+        <div style={styles.outputPanel}>
+          <p style={styles.outputLabel}>Output</p>
+          <pre style={{
+            ...styles.outputText,
+            color: outputStatus === 'error' ? '#f87171' : '#86efac'
+          }}>
+            {output || 'Run your code to see output here.'}
+          </pre>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const styles = {
+  container: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#0f0f0f', color: '#fff' },
+  topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', background: '#1a1a1a', borderBottom: '1px solid #2a2a2a', flexWrap: 'wrap', gap: '8px' },
+  leftBar: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+  roomCodeLabel: { fontWeight: '700', letterSpacing: '2px', fontSize: '16px' },
+  dot: { width: '8px', height: '8px', borderRadius: '50%' },
+  connLabel: { fontSize: '13px', color: '#888' },
+  cursorBadge: { fontSize: '11px', padding: '2px 8px', borderRadius: '20px', color: '#000', fontWeight: '600' },
+  rightBar: { display: 'flex', alignItems: 'center', gap: '10px' },
+  select: { background: '#2a2a2a', color: '#fff', border: '1px solid #3a3a3a', padding: '6px 10px', borderRadius: '6px', fontSize: '13px' },
+  runBtn: { background: '#16a34a', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
+  backBtn: { background: 'transparent', color: '#888', border: '1px solid #3a3a3a', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
+  main: { display: 'flex', flex: 1, overflow: 'hidden' },
+  questionPanel: { width: '280px', padding: '1.5rem', borderRight: '1px solid #2a2a2a', overflowY: 'auto' },
+  diffBadge: { fontSize: '11px', padding: '3px 10px', borderRadius: '20px', background: '#1e3a5f', color: '#7dd3fc', marginBottom: '12px', display: 'inline-block' },
+  questionTitle: { fontSize: '1rem', fontWeight: '600', margin: '10px 0', color: '#e2e8f0' },
+  questionDesc: { fontSize: '13px', color: '#94a3b8', lineHeight: '1.7' },
+  editorPanel: { flex: 1, overflow: 'hidden' },
+  outputPanel: { width: '280px', padding: '1rem', borderLeft: '1px solid #2a2a2a', overflowY: 'auto' },
+  outputLabel: { fontSize: '12px', color: '#555', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' },
+  outputText: { fontSize: '13px', color: '#86efac', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+}
