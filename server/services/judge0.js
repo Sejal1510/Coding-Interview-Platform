@@ -9,7 +9,7 @@ const LANGUAGE_IDS = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
-const runCode = async (code, language) => {
+const runCode = async (code, language, input = '') => {
   const languageId = LANGUAGE_IDS[language]
 
   if (!languageId) {
@@ -23,7 +23,7 @@ const runCode = async (code, language) => {
       {
         source_code: code,
         language_id: languageId,
-        stdin: ''
+        stdin: input
       },
       {
         headers: { 'Content-Type': 'application/json' },

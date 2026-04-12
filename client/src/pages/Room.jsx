@@ -26,6 +26,7 @@ export default function Room() {
   const [connected, setConnected] = useState(false)
   const [participants, setParticipants] = useState([])
   const [outputStatus, setOutputStatus] = useState('idle')
+  const [testResults, setTestResults] = useState([])
 
   // load session
   useEffect(() => {
@@ -62,9 +63,10 @@ export default function Room() {
 
     socket.on('language-update', ({ language: lang }) => setLanguage(lang))
 
-    socket.on('run-result', ({ output: result, status }) => {
+    socket.on('run-result', ({ output: result, status, testResults: tr }) => {
       setOutput(result)
       setOutputStatus(status || 'idle')
+      setTestResults(tr || [])
       setRunning(false)
     })
 
@@ -108,8 +110,10 @@ export default function Room() {
     setRunning(true)
     setOutput('Running...')
     const code = editorRef.current?.getValue() || ''
-    socketRef.current?.emit('run-code', { roomCode, code, language })
-
+    const questionId = session?.sessionQuestions?.[0]?.question?.id
+    console.log('questionId:', questionId)
+    console.log('session:', session)
+    socketRef.current?.emit('run-code', { roomCode, code, language, questionId })
     // save submission to DB
     if (session?.id) {
       api.post('/submissions', {
@@ -198,6 +202,34 @@ export default function Room() {
           }}>
             {output || 'Run your code to see output here.'}
           </pre>
+
+          {testResults.length > 0 && (
+            <div style={{ marginTop: '1rem' }}>
+              <p style={styles.outputLabel}>Test Cases</p>
+              {testResults.map((tc, i) => (
+                <div key={i} style={{
+                  background: tc.passed ? '#14532d' : '#450a0a',
+                  border: `1px solid ${tc.passed ? '#16a34a' : '#dc2626'}`,
+                  borderRadius: '8px',
+                  padding: '10px',
+                  marginBottom: '8px',
+                  fontSize: '12px'
+                }}>
+                  <div style={{ marginBottom: '4px' }}>
+                    <span style={{ color: tc.passed ? '#86efac' : '#f87171', fontWeight: '700' }}>
+                      {tc.passed ? '✅ Passed' : '❌ Failed'}
+                    </span>
+                    <span style={{ color: '#888', marginLeft: '8px' }}>Test {i + 1}</span>
+                  </div>
+                  <div style={{ color: '#94a3b8' }}>Input: {tc.input}</div>
+                  <div style={{ color: '#94a3b8' }}>Expected: {tc.expectedOutput}</div>
+                  {!tc.passed && (
+                    <div style={{ color: '#f87171' }}>Got: {tc.actualOutput}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

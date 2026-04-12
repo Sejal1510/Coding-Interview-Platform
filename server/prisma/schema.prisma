@@ -66,6 +66,17 @@ model Question {
   creator      User       @relation(fields: [createdBy], references: [id])
 
   sessionQuestions SessionQuestion[]
+  testCases        TestCase[]
+}
+
+model TestCase {
+  id             String   @id @default(uuid())
+  questionId     String
+  input          String
+  expectedOutput String
+  isHidden       Boolean  @default(false)
+
+  question Question @relation(fields: [questionId], references: [id])
 }
 
 model SessionQuestion {

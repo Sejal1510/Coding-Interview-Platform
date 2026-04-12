@@ -6,7 +6,7 @@ const { authGuard, roleGuard } = require('../middleware/authGuard')
 // POST /api/questions — only interviewers can create questions
 router.post('/', authGuard, roleGuard('INTERVIEWER'), async (req, res) => {
   try {
-    const { title, description, difficulty, timeLimitSec } = req.body
+    const { title, description, difficulty, timeLimitSec, testCases } = req.body
 
     if (!title || !description || !difficulty) {
       return res.status(400).json({ error: 'title, description and difficulty are required' })
@@ -18,7 +18,14 @@ router.post('/', authGuard, roleGuard('INTERVIEWER'), async (req, res) => {
         description,
         difficulty,
         timeLimitSec: timeLimitSec || 1800,
-        createdBy: req.user.userId
+        createdBy: req.user.userId,
+        testCases: {
+          create: (testCases || []).map(tc => ({
+            input: tc.input,
+            expectedOutput: tc.expectedOutput,
+            isHidden: tc.isHidden || false
+          }))
+        }
       }
     })
 

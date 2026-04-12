@@ -62,18 +62,57 @@ const setupCollabSockets = (io, socket) => {
     socket.to(roomCode).emit('language-update', { language })
   })
 
-  socket.on('run-code', async ({ roomCode, code, language }) => {
+  socket.on('run-code', async ({ roomCode, code, language, questionId }) => {
+    console.log('run-code received, questionId:', questionId)
     try {
       const { runCode } = require('../services/judge0')
-      const result = await runCode(code, language)
+      const prisma = require('../prisma/client')
+
+      // fetch test cases for this question
+      const testCases = questionId ? await prisma.testCase.findMany({
+        where: { questionId }
+      }) : []
+
+      if (testCases.length === 0) {
+        // no test cases, just run normally
+        const result = await runCode(code, language)
+        io.to(roomCode).emit('run-result', {
+          output: result.output,
+          status: result.status,
+          testResults: []
+        })
+        return
+      }
+
+      // run code against each test case
+      const testResults = []
+      for (const tc of testCases) {
+        console.log('Sending input to Judge0:', JSON.stringify(tc.input))
+        const result = await runCode(code, language, tc.input)
+        const actual = result.output?.trim()
+        const expected = tc.expectedOutput?.trim()
+        const passed = actual === expected
+        testResults.push({
+          input: tc.input,
+          expectedOutput: expected,
+          actualOutput: actual,
+          passed,
+          isHidden: tc.isHidden
+        })
+      }
+
+      const allPassed = testResults.every(t => t.passed)
       io.to(roomCode).emit('run-result', {
-        output: result.output,
-        status: result.status
+        output: allPassed ? 'All test cases passed! 🎉' : 'Some test cases failed.',
+        status: allPassed ? 'success' : 'error',
+        testResults
       })
+
     } catch (err) {
       io.to(roomCode).emit('run-result', {
         output: `Server error: ${err.message}`,
-        status: 'error'
+        status: 'error',
+        testResults: []
       })
     }
   })

@@ -35,10 +35,6 @@ export default function Dashboard() {
           <p style={styles.subtitle}>Welcome back, {user?.name}</p>
         </div>
         <div style={styles.userInfo}>
-          <span style={styles.roleBadge}>{user?.role}</span>
-          <button style={styles.logoutBtn} onClick={logout}>Logout</button>
-        </div>
-        <div style={styles.userInfo}>
           {user?.role === 'INTERVIEWER' && (
             <button style={styles.createBtn} onClick={() => navigate('/sessions/new')}>
               + Create room
