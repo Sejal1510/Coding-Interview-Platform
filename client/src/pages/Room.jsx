@@ -28,6 +28,12 @@ export default function Room() {
   const [outputStatus, setOutputStatus] = useState('idle')
   const [testResults, setTestResults] = useState([])
 
+
+const [submitResults, setSubmitResults] = useState(null)  // null = not submitted yet
+const [submitting, setSubmitting] = useState(false)
+const [submitted, setSubmitted] = useState(false)
+
+
   // load session
   useEffect(() => {
     api.get(`/sessions/room/${roomCode}`)
@@ -70,6 +76,12 @@ export default function Room() {
       setRunning(false)
     })
 
+    socket.on('submit-result', ({ output: result, status, testResults: tr, score, total }) => {
+  setSubmitResults({ output: result, status, testResults: tr, score, total })
+  setSubmitting(false)
+  setSubmitted(true)
+})
+
     return () => socket.disconnect()
   }, [user, roomCode])
 
@@ -101,10 +113,13 @@ export default function Room() {
   const ytextRef = ytext
 
   const handleLanguageChange = (e) => {
-    const lang = e.target.value
-    setLanguage(lang)
-    socketRef.current?.emit('language-change', { roomCode, language: lang })
-  }
+  const lang = e.target.value
+  setLanguage(lang)
+
+  socketRef.current?.emit('language-change', { roomCode, language: lang })
+}
+   
+    
 
   const handleRunCode = () => {
     setRunning(true)
@@ -124,6 +139,24 @@ export default function Room() {
       }).catch(err => console.error('Failed to save submission:', err))
     }
   }
+
+
+  const handleSubmitCode = () => {
+  if (submitted) return
+
+  setSubmitting(true)
+
+  const code = editorRef.current?.getValue() || ''
+  const questionId = session?.sessionQuestions?.[0]?.question?.id
+
+  socketRef.current?.emit('submit-code', {
+    roomCode,
+    code,
+    language,
+    questionId,
+    role: user?.role
+  })
+}
 
   return (
     <div style={styles.container}>
@@ -156,6 +189,24 @@ export default function Room() {
           <button style={styles.runBtn} onClick={handleRunCode} disabled={running}>
             {running ? 'Running...' : 'Run Code'}
           </button>
+          {/* Show Submit button only to students */}
+{user?.role === 'STUDENT' && (
+  <button
+    onClick={handleSubmitCode}
+    disabled={submitting || submitted}
+    style={{
+      padding: '7px 18px',
+      background: submitted ? '#166534' : '#4f46e5',
+      color: '#fff',
+      border: 'none',
+      borderRadius: '6px',
+      cursor: submitted ? 'not-allowed' : 'pointer',
+      fontSize: '13px'
+    }}
+  >
+    {submitting ? 'Submitting...' : submitted ? '✅ Submitted' : '🚀 Submit'}
+  </button>
+)}
           <button style={styles.backBtn} onClick={() => navigate('/dashboard')}>
             Leave
           </button>
@@ -202,34 +253,118 @@ export default function Room() {
           }}>
             {output || 'Run your code to see output here.'}
           </pre>
-
+{testResults.length > 0 && (
+  <p style={{ color: '#888', fontSize: '12px', marginTop: '4px' }}>
+    {user?.role === 'INTERVIEWER'
+      ? `${testResults.filter(t => t.passed).length}/${testResults.length} passed`
+      : `${testResults.filter(t => !t.isHidden && t.passed).length}/${
+          testResults.filter(t => !t.isHidden).length
+        } visible tests passed`
+    }
+  </p>
+)}
           {testResults.length > 0 && (
             <div style={{ marginTop: '1rem' }}>
               <p style={styles.outputLabel}>Test Cases</p>
-              {testResults.map((tc, i) => (
-                <div key={i} style={{
-                  background: tc.passed ? '#14532d' : '#450a0a',
-                  border: `1px solid ${tc.passed ? '#16a34a' : '#dc2626'}`,
-                  borderRadius: '8px',
-                  padding: '10px',
-                  marginBottom: '8px',
-                  fontSize: '12px'
-                }}>
-                  <div style={{ marginBottom: '4px' }}>
-                    <span style={{ color: tc.passed ? '#86efac' : '#f87171', fontWeight: '700' }}>
-                      {tc.passed ? '✅ Passed' : '❌ Failed'}
-                    </span>
-                    <span style={{ color: '#888', marginLeft: '8px' }}>Test {i + 1}</span>
-                  </div>
-                  <div style={{ color: '#94a3b8' }}>Input: {tc.input}</div>
-                  <div style={{ color: '#94a3b8' }}>Expected: {tc.expectedOutput}</div>
-                  {!tc.passed && (
-                    <div style={{ color: '#f87171' }}>Got: {tc.actualOutput}</div>
-                  )}
-                </div>
-              ))}
+              {testResults.map((tc, i) => {
+  // Students cannot see hidden test cases at all
+  if (tc.isHidden && user?.role !== 'INTERVIEWER') {
+    return null;
+  }
+  return (
+    <div key={i} style={{
+      background: tc.passed ? '#14532d' : '#450a0a',
+      border: `1px solid ${tc.passed ? '#16a34a' : '#dc2626'}`,
+      borderRadius: '8px',
+      padding: '10px',
+      marginBottom: '8px',
+      fontSize: '12px'
+    }}>
+      <div style={{ marginBottom: '4px' }}>
+        <span style={{ color: tc.passed ? '#86efac' : '#f87171', fontWeight: '700' }}>
+          {tc.passed ? '✅ Passed' : '❌ Failed'}
+        </span>
+        <span style={{ color: '#888', marginLeft: '8px' }}>Test {i + 1}</span>
+        {tc.isHidden && (
+          <span style={{ color: '#a78bfa', marginLeft: '8px', fontSize: '11px' }}>
+            🔒 Hidden
+          </span>
+        )}
+      </div>
+      {/* Interviewer sees full details. Student sees no details for hidden tests */}
+      {user?.role === 'INTERVIEWER' ? (
+        <>
+          <div style={{ color: '#94a3b8' }}>Input: {tc.input}</div>
+          <div style={{ color: '#94a3b8' }}>Expected: {tc.expectedOutput}</div>
+          {!tc.passed && (
+            <div style={{ color: '#f87171' }}>Got: {tc.actualOutput}</div>
+          )}
+        </>
+      ) : (
+        // Student sees input/expected only for visible test cases
+        <>
+          <div style={{ color: '#94a3b8' }}>Input: {tc.input}</div>
+          <div style={{ color: '#94a3b8' }}>Expected: {tc.expectedOutput}</div>
+          {!tc.passed && (
+            <div style={{ color: '#f87171' }}>Got: {tc.actualOutput}</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+})}
             </div>
           )}
+          {submitResults && (
+  <div style={{
+    marginTop: '1.5rem',
+    padding: '16px',
+    background: submitResults.status === 'success' ? '#14532d' : '#450a0a',
+    border: `2px solid ${submitResults.status === 'success' ? '#16a34a' : '#dc2626'}`,
+    borderRadius: '10px'
+  }}>
+    <p style={{ color: '#fff', fontWeight: '700', fontSize: '15px', margin: '0 0 8px' }}>
+      📊 Final Submission Result
+    </p>
+
+    <p style={{ color: submitResults.status === 'success' ? '#86efac' : '#f87171', fontSize: '14px' }}>
+      {submitResults.output}
+    </p>
+
+    <p style={{ color: '#94a3b8', fontSize: '13px' }}>
+      Score: {submitResults.score} / {submitResults.total}
+    </p>
+
+    {submitResults.testResults.map((tc, i) => {
+      if (tc.isHidden && user?.role !== 'INTERVIEWER') return null
+
+      return (
+        <div key={i} style={{
+          background: '#0f0f0f',
+          borderRadius: '6px',
+          padding: '8px',
+          marginTop: '6px',
+          fontSize: '12px'
+        }}>
+          <span style={{ color: tc.passed ? '#86efac' : '#f87171', fontWeight: '700' }}>
+            {tc.passed ? '✅' : '❌'} Test {i + 1}
+            {tc.isHidden && <span style={{ color: '#a78bfa' }}> 🔒 Hidden</span>}
+          </span>
+
+          {user?.role === 'INTERVIEWER' && (
+            <div style={{ marginTop: '4px', color: '#94a3b8' }}>
+              <div>Input: {tc.input}</div>
+              <div>Expected: {tc.expectedOutput}</div>
+              {!tc.passed && (
+                <div style={{ color: '#f87171' }}>Got: {tc.actualOutput}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )
+    })}
+  </div>
+)}
         </div>
       </div>
     </div>
@@ -258,3 +393,4 @@ const styles = {
   outputLabel: { fontSize: '12px', color: '#555', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' },
   outputText: { fontSize: '13px', color: '#86efac', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
 }
+

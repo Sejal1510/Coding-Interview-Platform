@@ -62,7 +62,8 @@ const setupCollabSockets = (io, socket) => {
     socket.to(roomCode).emit('language-update', { language })
   })
 
-  socket.on('run-code', async ({ roomCode, code, language, questionId }) => {
+  //socket.on('run-code', async ({ roomCode, code, language, questionId }) => {
+    socket.on('run-code', async ({ roomCode, code, language, questionId, role }) => {
     console.log('run-code received, questionId:', questionId)
     try {
       const { runCode } = require('../services/judge0')
@@ -93,12 +94,28 @@ const setupCollabSockets = (io, socket) => {
         const expected = tc.expectedOutput?.trim()
         const passed = actual === expected
         testResults.push({
-          input: tc.input,
-          expectedOutput: expected,
-          actualOutput: actual,
-          passed,
-          isHidden: tc.isHidden
-        })
+            input: (tc.isHidden && role === 'STUDENT') ? "Hidden" : tc.input,
+            expectedOutput: (tc.isHidden && role === 'STUDENT') ? "Hidden" : expected,
+            actualOutput: (tc.isHidden && role === 'STUDENT') ? "Hidden" : actual,
+            passed,
+            isHidden: tc.isHidden
+          })
+        // testResults.push({
+        //   input: tc.isHidden ? "Hidden" : tc.input,
+        //   expectedOutput: tc.isHidden ? "Hidden" : expected,
+        //   actualOutput: tc.isHidden ? "Hidden" : actual,
+        //   passed,
+        //   isHidden: tc.isHidden
+        // })
+
+
+        // testResults.push({
+        //   input: tc.input,
+        //   expectedOutput: expected,
+        //   actualOutput: actual,
+        //   passed,
+        //   isHidden: tc.isHidden
+        // })
       }
 
       const allPassed = testResults.every(t => t.passed)
@@ -116,6 +133,69 @@ const setupCollabSockets = (io, socket) => {
       })
     }
   })
+
+  socket.on('submit-code', async ({ roomCode, code, language, questionId }) => {
+  try {
+    const { runCode } = require('../services/judge0')
+    const prisma = require('../prisma/client')
+
+    const testCases = questionId ? await prisma.testCase.findMany({
+      where: { questionId }
+    }) : []
+
+    if (testCases.length === 0) {
+      io.to(roomCode).emit('submit-result', {
+        output: 'No test cases found.',
+        status: 'error',
+        testResults: [],
+        score: 0,
+        total: 0
+      })
+      return
+    }
+
+    const testResults = []
+    for (const tc of testCases) {
+      const result = await runCode(code, language, tc.input)
+      const actual = result.output?.trim()
+      const expected = tc.expectedOutput?.trim()
+      const passed = actual === expected
+      testResults.push({
+        input: tc.input,
+        expectedOutput: expected,
+        actualOutput: actual,
+        passed,
+        isHidden: tc.isHidden
+      })
+    }
+
+    const passed = testResults.filter(t => t.passed).length
+    const total = testResults.length
+    const allPassed = passed === total
+
+    // Save final submission to DB
+    // (optional but recommended - you already have a submissions table)
+
+    io.to(roomCode).emit('submit-result', {
+      output: allPassed
+        ? `✅ All ${total} test cases passed! Great job!`
+        : `${passed}/${total} test cases passed.`,
+      status: allPassed ? 'success' : 'error',
+      testResults,
+      score: passed,
+      total
+    })
+
+  } catch (err) {
+    io.to(roomCode).emit('submit-result', {
+      output: `Server error: ${err.message}`,
+      status: 'error',
+      testResults: [],
+      score: 0,
+      total: 0
+    })
+  }
+})
 
   socket.on('timer-start', ({ roomCode, duration }) => {
     // clear any existing timer for this room
